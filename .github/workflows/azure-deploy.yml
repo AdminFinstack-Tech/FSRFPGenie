@@ -1,0 +1,122 @@
+name: Deploy to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  AZURE_RESOURCE_GROUP: rfpai-rg
+  AZURE_CONTAINER_REGISTRY: rfpaiacr
+  BACKEND_IMAGE_NAME: rfpai-backend
+  FRONTEND_IMAGE_NAME: rfpai-frontend
+  CONTAINER_APP_BACKEND: rfpai-backend
+  CONTAINER_APP_FRONTEND: rfpai-frontend
+  CONTAINER_APP_ENVIRONMENT: rfpai-env
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to Azure Container Registry
+        run: |
+          az acr login --name ${{ env.AZURE_CONTAINER_REGISTRY }}
+
+      - name: Build and push Backend image
+        run: |
+          docker build -t ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }} \
+                       -t ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.BACKEND_IMAGE_NAME }}:latest \
+                       ./backend
+          docker push ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.BACKEND_IMAGE_NAME }}:latest
+
+      - name: Build and push Frontend image
+        run: |
+          docker build -t ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }} \
+                       -t ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.FRONTEND_IMAGE_NAME }}:latest \
+                       ./frontend
+          docker push ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.FRONTEND_IMAGE_NAME }}:latest
+
+  deploy-backend:
+    name: Deploy Backend to Azure Container Apps
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy Backend Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_BACKEND }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }} \
+            --set-env-vars \
+              AZURE_OPENAI_ENDPOINT=${{ secrets.AZURE_OPENAI_ENDPOINT }} \
+              AZURE_OPENAI_API_KEY=${{ secrets.AZURE_OPENAI_API_KEY }} \
+              AZURE_OPENAI_DEPLOYMENT_NAME=${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }} \
+              AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME=${{ secrets.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME }} \
+              MONGO_URI=${{ secrets.MONGO_URI }} \
+              AZURE_STORAGE_CONNECTION_STRING=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }} \
+              AZURE_STORAGE_CONTAINER_NAME=${{ secrets.AZURE_STORAGE_CONTAINER_NAME }}
+
+  deploy-frontend:
+    name: Deploy Frontend to Azure Container Apps
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy Frontend Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_FRONTEND }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+
+  verify-deployment:
+    name: Verify Deployment
+    needs: [deploy-backend, deploy-frontend]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get Backend URL
+        run: |
+          BACKEND_URL=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_BACKEND }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "Backend URL: https://$BACKEND_URL"
+
+      - name: Get Frontend URL
+        run: |
+          FRONTEND_URL=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_FRONTEND }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "Frontend URL: https://$FRONTEND_URL"
+          echo "🚀 Deployment completed successfully!"
