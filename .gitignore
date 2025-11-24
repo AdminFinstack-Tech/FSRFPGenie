@@ -1,1 +1,9 @@
 node_modules
+
+# Environment files with secrets
+.env
+.env.*
+*.env
+.env.azure
+.env.azure.save
+scripts/.env.*
