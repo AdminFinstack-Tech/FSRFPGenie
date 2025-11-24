@@ -1,0 +1,835 @@
+<template>
+  <div class="search-container">
+    <!-- Page Header with Gradient -->
+    <div class="page-header">
+      <div class="header-content">
+        <h1 class="header-title">
+          <v-icon large class="mr-3">mdi-brain</v-icon>
+          Intelligent RFP Assistant
+        </h1>
+        <p class="header-subtitle">Ask questions in natural language and get AI-powered answers from your RFP documents</p>
+      </div>
+    </div>
+
+    <!-- AI Search Mode Selector -->
+    <v-card class="mode-selector mb-6" elevation="2">
+      <v-card-text>
+        <div class="d-flex align-center justify-space-between">
+          <div>
+            <h3 class="text-h6 mb-1">Search Mode</h3>
+            <p class="text-caption text-grey">Choose how you want to search</p>
+          </div>
+          <v-chip-group v-model="searchMode" mandatory>
+            <v-chip value="intelligent" color="primary" class="px-6">
+              <v-icon left>mdi-robot</v-icon>
+              AI Intelligent
+            </v-chip>
+            <v-chip value="keyword" color="secondary" class="px-6">
+              <v-icon left>mdi-magnify</v-icon>
+              Keyword Search
+            </v-chip>
+          </v-chip-group>
+        </div>
+      </v-card-text>
+    </v-card>
+
+    <!-- Enhanced Search Bar -->
+    <v-card class="search-card mb-6" elevation="3">
+      <v-card-text class="pa-6">
+        <div class="search-input-wrapper">
+          <v-textarea
+            v-model="searchQuery"
+            :placeholder="searchMode === 'intelligent' ? 'Ask a question: What are the fraud detection requirements?' : 'Search for keywords...'"
+            auto-grow
+            rows="2"
+            variant="outlined"
+            density="comfortable"
+            clearable
+            @keydown.enter.exact="performSearch"
+            @keydown.enter.shift.prevent
+            class="enhanced-search-input"
+            hide-details
+          >
+            <template v-slot:prepend-inner>
+              <v-icon :color="searchMode === 'intelligent' ? 'primary' : 'secondary'" size="large">
+                {{ searchMode === 'intelligent' ? 'mdi-chat-question' : 'mdi-magnify' }}
+              </v-icon>
+            </template>
+          </v-textarea>
+        </div>
+        
+        <div class="d-flex align-center justify-space-between mt-4">
+          <v-btn
+            text
+            size="small"
+            @click="showFilters = !showFilters"
+            class="text-caption"
+          >
+            <v-icon left small>{{ showFilters ? 'mdi-chevron-up' : 'mdi-filter-variant' }}</v-icon>
+            {{ showFilters ? 'Hide' : 'Show' }} Advanced Filters
+          </v-btn>
+          
+          <v-btn
+            color="primary"
+            size="large"
+            @click="performSearch"
+            :loading="loading"
+            :disabled="!searchQuery"
+            class="px-8"
+          >
+            <v-icon left>{{ searchMode === 'intelligent' ? 'mdi-sparkles' : 'mdi-magnify' }}</v-icon>
+            {{ searchMode === 'intelligent' ? 'Ask AI' : 'Search' }}
+          </v-btn>
+        </div>
+
+        <!-- Advanced Filters -->
+        <v-expand-transition>
+          <div v-if="showFilters" class="mt-4 pt-4 border-t">
+            <v-row>
+              <v-col cols="12" md="4">
+                <v-select
+                  v-model="filters.products"
+                  label="Filter by Products"
+                  :items="availableProducts"
+                  multiple
+                  chips
+                  closable-chips
+                  clearable
+                  density="compact"
+                  variant="outlined"
+                ></v-select>
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-select
+                  v-model="filters.response_categories"
+                  label="Response Category"
+                  :items="responseCategories"
+                  multiple
+                  chips
+                  closable-chips
+                  clearable
+                  density="compact"
+                  variant="outlined"
+                ></v-select>
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-select
+                  v-model="resultLimit"
+                  label="Max Results"
+                  :items="[5, 10, 20, 50]"
+                  density="compact"
+                  variant="outlined"
+                ></v-select>
+              </v-col>
+            </v-row>
+          </div>
+        </v-expand-transition>
+      </v-card-text>
+    </v-card>
+
+    <!-- AI Answer Section (Intelligent Mode Only) -->
+    <v-expand-transition>
+      <div v-if="hasSearched && searchMode === 'intelligent' && aiAnswer">
+        <v-card class="ai-answer-card mb-6" elevation="4">
+          <div class="answer-header">
+            <div class="d-flex align-center justify-space-between">
+              <div class="d-flex align-center">
+                <v-avatar color="primary" size="40" class="mr-3">
+                  <v-icon color="white">mdi-robot</v-icon>
+                </v-avatar>
+                <div>
+                  <h3 class="text-h6">AI Answer</h3>
+                  <p class="text-caption text-grey mb-0">
+                    <v-chip size="x-small" :color="getConfidenceColor(aiAnswer.confidence)" class="mr-2">
+                      {{ Math.round(aiAnswer.confidence * 100) }}% confidence
+                    </v-chip>
+                    Powered by {{ aiAnswer.model || 'GPT-4o' }}
+                  </p>
+                </div>
+              </div>
+              
+              <div class="d-flex gap-2">
+                <v-btn icon size="small" variant="text" @click="copyAnswer">
+                  <v-icon>mdi-content-copy</v-icon>
+                </v-btn>
+                <v-btn icon size="small" variant="text" @click="exportAnswer">
+                  <v-icon>mdi-download</v-icon>
+                </v-btn>
+              </div>
+            </div>
+          </div>
+          
+          <v-card-text class="answer-content pa-6">
+            <div class="answer-text" v-html="formattedAnswer"></div>
+            
+            <!-- Follow-up Questions -->
+            <div v-if="suggestedQuestions.length > 0" class="mt-6">
+              <p class="text-subtitle-2 mb-3">
+                <v-icon small class="mr-1">mdi-help-circle</v-icon>
+                Suggested follow-up questions:
+              </p>
+              <v-chip-group column>
+                <v-chip
+                  v-for="(question, index) in suggestedQuestions"
+                  :key="index"
+                  @click="askFollowUp(question)"
+                  variant="outlined"
+                  class="ma-1"
+                >
+                  {{ question }}
+                </v-chip>
+              </v-chip-group>
+            </div>
+          </v-card-text>
+        </v-card>
+      </div>
+    </v-expand-transition>
+
+    <!-- Source Documents Section -->
+    <v-expand-transition>
+      <div v-if="hasSearched && sourcesAvailable">
+        <div class="sources-header mb-4">
+          <h2 class="text-h5">
+            <v-icon class="mr-2">mdi-file-document-multiple</v-icon>
+            Source Documents
+          </h2>
+          <p class="text-body-2 text-grey">
+            {{ totalResults }} relevant {{ totalResults === 1 ? 'document' : 'documents' }} found
+            <span v-if="searchMode === 'intelligent'"> (used to generate answer)</span>
+          </p>
+        </div>
+
+        <v-card v-if="searchResults.length > 0" class="sources-card" elevation="2">
+          <v-list class="py-0">
+            <template v-for="(result, index) in searchResults" :key="result.record_id">
+              <v-list-item class="source-item py-4">
+                <template v-slot:prepend>
+                  <div class="relevance-indicator mr-4">
+                    <v-progress-circular
+                      :model-value="result.relevance_score * 100"
+                      :size="60"
+                      :width="6"
+                      :color="getScoreColor(result.relevance_score)"
+                      class="score-circle"
+                    >
+                      <span class="score-text">
+                        {{ Math.round(result.relevance_score * 100) }}
+                      </span>
+                    </v-progress-circular>
+                    <p class="text-caption text-center mt-1 mb-0">Match</p>
+                  </div>
+                </template>
+
+                <v-list-item-content>
+                  <!-- Meta Tags -->
+                  <div class="meta-tags mb-3">
+                    <v-chip size="small" label class="mr-2" color="primary" variant="outlined">
+                      <v-icon left size="small">mdi-package-variant</v-icon>
+                      {{ result.product || 'General' }}
+                    </v-chip>
+                    
+                    <v-chip
+                      size="small"
+                      label
+                      :color="getResponseColor(result.response_category)"
+                      class="mr-2"
+                      dark
+                    >
+                      {{ result.response_category }}
+                    </v-chip>
+
+                    <v-chip
+                      v-if="result.sheet_name"
+                      size="small"
+                      label
+                      outlined
+                      class="mr-2"
+                      color="info"
+                    >
+                      <v-icon left size="small">mdi-table</v-icon>
+                      {{ result.sheet_name }}
+                    </v-chip>
+
+                    <v-chip
+                      v-if="result.effort_required"
+                      size="small"
+                      label
+                      outlined
+                      class="mr-2"
+                    >
+                      <v-icon left size="small">mdi-clock-outline</v-icon>
+                      {{ result.effort_required }}
+                    </v-chip>
+                  </div>
+
+                  <!-- Requirement Preview -->
+                  <div class="requirement-preview mb-3">
+                    <p class="text-subtitle-1 font-weight-medium mb-2">
+                      {{ truncateText(result.requirement, 200) }}
+                    </p>
+                    
+                    <!-- Highlighted Match -->
+                    <div v-if="result.highlight" class="highlight-box pa-3 rounded">
+                      <p class="text-caption text-grey mb-1">
+                        <v-icon size="small" class="mr-1">mdi-text-search</v-icon>
+                        Matching excerpt:
+                      </p>
+                      <p class="text-body-2" v-html="result.highlight"></p>
+                    </div>
+                  </div>
+
+                  <!-- Document Info -->
+                  <div class="document-info text-body-2 text-grey">
+                    <v-icon size="small" class="mr-1">mdi-file-document</v-icon>
+                    <span class="mr-3">{{ result.file_name || result.rfp_name }}</span>
+                    
+                    <v-icon size="small" class="mr-1">mdi-bank</v-icon>
+                    <span class="mr-3">{{ result.bank_name }}</span>
+                    
+                    <v-icon size="small" class="mr-1">mdi-calendar</v-icon>
+                    <span>{{ formatDate(result.date) }}</span>
+                  </div>
+
+                  <!-- Expandable Full Details -->
+                  <v-expand-transition>
+                    <div v-if="expandedItems.includes(result.record_id)" class="mt-4">
+                      <v-divider class="mb-4"></v-divider>
+                      
+                      <div class="expanded-content pa-4 rounded">
+                        <h4 class="text-subtitle-2 font-weight-bold mb-3">
+                          <v-icon small class="mr-1">mdi-text-box</v-icon>
+                          Full Requirement
+                        </h4>
+                        <p class="text-body-2 mb-4 requirement-text">{{ result.requirement }}</p>
+                        
+                        <div v-if="result.comments" class="mb-4">
+                          <h4 class="text-subtitle-2 font-weight-bold mb-2">
+                            <v-icon small class="mr-1">mdi-comment-text</v-icon>
+                            Comments
+                          </h4>
+                          <p class="text-body-2">{{ result.comments }}</p>
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="d-flex gap-2 mt-4">
+                          <v-btn size="small" variant="outlined" color="primary" @click="copyText(result.requirement)">
+                            <v-icon left size="small">mdi-content-copy</v-icon>
+                            Copy Text
+                          </v-btn>
+                          <v-btn size="small" variant="outlined" color="primary" @click="exportResult(result)">
+                            <v-icon left size="small">mdi-download</v-icon>
+                            Export
+                          </v-btn>
+                          <v-btn size="small" variant="outlined" color="primary" @click="searchSimilar(result)">
+                            <v-icon left size="small">mdi-magnify-plus</v-icon>
+                            Find Similar
+                          </v-btn>
+                        </div>
+                      </div>
+                    </div>
+                  </v-expand-transition>
+
+                  <!-- Toggle Button -->
+                  <v-btn
+                    text
+                    size="small"
+                    color="primary"
+                    @click="toggleExpand(result.record_id)"
+                    class="mt-3"
+                  >
+                    <v-icon left size="small">
+                      {{ expandedItems.includes(result.record_id) ? 'mdi-chevron-up' : 'mdi-chevron-down' }}
+                    </v-icon>
+                    {{ expandedItems.includes(result.record_id) ? 'Show Less' : 'Show Full Details' }}
+                  </v-btn>
+                </v-list-item-content>
+              </v-list-item>
+              
+              <v-divider
+                v-if="index < searchResults.length - 1"
+                :key="`divider-${index}`"
+              ></v-divider>
+            </template>
+          </v-list>
+        </v-card>
+
+        <!-- No Results -->
+        <v-card v-else class="empty-state pa-12 text-center" elevation="2">
+          <v-icon size="80" color="grey-lighten-1">mdi-file-search</v-icon>
+          <h3 class="text-h6 mt-4 mb-2">No Matching Documents Found</h3>
+          <p class="text-body-2 text-grey mb-4">
+            We couldn't find any documents matching your search criteria.
+          </p>
+          <v-btn color="primary" variant="outlined" @click="clearSearch">
+            <v-icon left>mdi-refresh</v-icon>
+            Try New Search
+          </v-btn>
+        </v-card>
+      </div>
+    </v-expand-transition>
+
+    <!-- Initial Welcome State -->
+    <v-card v-if="!hasSearched" class="welcome-card pa-12 text-center" elevation="2">
+      <v-icon size="80" color="primary">mdi-comment-question</v-icon>
+      <h3 class="text-h5 mt-4 mb-2">Ask Anything About Your RFPs</h3>
+      <p class="text-body-1 text-grey mb-8">
+        Use natural language to search through your RFP documents and get instant AI-powered answers
+      </p>
+      
+      <!-- Example Queries -->
+      <div class="mx-auto" style="max-width: 700px;">
+        <p class="text-subtitle-2 mb-4">
+          <v-icon small class="mr-1">mdi-lightbulb-on</v-icon>
+          Try these example queries:
+        </p>
+        <div class="example-chips">
+          <v-chip
+            v-for="example in exampleQueries"
+            :key="example"
+            @click="searchQuery = example; performSearch()"
+            size="large"
+            variant="outlined"
+            class="ma-2 example-chip"
+          >
+            <v-icon left size="small">mdi-lightning-bolt</v-icon>
+            {{ example }}
+          </v-chip>
+        </div>
+      </div>
+    </v-card>
+  </div>
+</template>
+
+<script>
+import { format } from 'date-fns'
+import axios from 'axios'
+import { marked } from 'marked'
+
+export default {
+  name: 'SearchViewNew',
+  data() {
+    return {
+      searchMode: 'intelligent',
+      searchQuery: '',
+      lastSearchQuery: '',
+      showFilters: false,
+      loading: false,
+      hasSearched: false,
+      expandedItems: [],
+      
+      aiAnswer: null,
+      suggestedQuestions: [],
+      
+      filters: {
+        products: [],
+        response_categories: []
+      },
+      resultLimit: 10,
+      totalResults: 0,
+      
+      searchResults: [],
+      
+      availableProducts: ['MLC', 'EPLC', 'Integration', 'Mobile Banking', 'Internet Banking', 'General'],
+      responseCategories: ['Readily Available', 'Configuration', 'Customization', 'Not Available', 'Pending Review'],
+      
+      exampleQueries: [
+        'What are the security requirements for authentication?',
+        'Describe the reporting and analytics capabilities needed',
+        'What are the integration requirements with core banking?',
+        'List the mobile banking features required',
+        'What are the compliance and regulatory requirements?'
+      ]
+    }
+  },
+  computed: {
+    sourcesAvailable() {
+      return this.searchResults && this.searchResults.length > 0
+    },
+    formattedAnswer() {
+      if (!this.aiAnswer || !this.aiAnswer.answer) return ''
+      return marked(this.aiAnswer.answer)
+    }
+  },
+  methods: {
+    async performSearch() {
+      if (!this.searchQuery || this.searchQuery.trim().length < 3) {
+        this.$toast.warning('Please enter at least 3 characters')
+        return
+      }
+      
+      this.loading = true
+      this.hasSearched = true
+      this.lastSearchQuery = this.searchQuery
+      this.expandedItems = []
+      this.aiAnswer = null
+      this.searchResults = []
+      
+      try {
+        if (this.searchMode === 'intelligent') {
+          // AI Intelligent Search
+          const response = await axios.post('/api/search/ask', {
+            question: this.searchQuery,
+            filters: this.filters,
+            max_context_docs: this.resultLimit,
+            temperature: 0.7,
+            max_answer_length: 1000
+          })
+          
+          this.aiAnswer = response.data
+          this.searchResults = response.data.sources || []
+          this.totalResults = this.searchResults.length
+          
+          // Generate suggested follow-up questions
+          this.generateFollowUpQuestions()
+          
+        } else {
+          // Keyword Search
+          const response = await axios.post('/api/search', {
+            query: this.searchQuery,
+            top_n: this.resultLimit,
+            filters: this.filters
+          })
+          
+          this.searchResults = response.data.results || []
+          this.totalResults = response.data.total_results || 0
+        }
+        
+        if (this.totalResults === 0) {
+          this.$toast.info('No results found. Try different keywords.')
+        } else {
+          this.$toast.success(`Found ${this.totalResults} relevant results`)
+        }
+        
+      } catch (error) {
+        console.error('Search error:', error)
+        this.$toast.error('Search failed. Please try again.')
+      } finally {
+        this.loading = false
+      }
+    },
+    
+    generateFollowUpQuestions() {
+      // Simple follow-up question generation based on context
+      const question = this.searchQuery.toLowerCase()
+      this.suggestedQuestions = []
+      
+      if (question.includes('requirement')) {
+        this.suggestedQuestions.push('What are the technical specifications?')
+        this.suggestedQuestions.push('Are there any compliance requirements?')
+      }
+      
+      if (question.includes('security') || question.includes('authentication')) {
+        this.suggestedQuestions.push('What encryption standards are required?')
+        this.suggestedQuestions.push('Are there MFA requirements?')
+      }
+      
+      if (this.suggestedQuestions.length === 0) {
+        this.suggestedQuestions = [
+          'Can you provide more details?',
+          'Are there any related features?',
+          'What are the implementation considerations?'
+        ]
+      }
+    },
+    
+    askFollowUp(question) {
+      this.searchQuery = question
+      this.performSearch()
+    },
+    
+    clearSearch() {
+      this.searchQuery = ''
+      this.hasSearched = false
+      this.lastSearchQuery = ''
+      this.aiAnswer = null
+      this.searchResults = []
+      this.expandedItems = []
+      this.suggestedQuestions = []
+    },
+    
+    toggleExpand(recordId) {
+      const index = this.expandedItems.indexOf(recordId)
+      if (index > -1) {
+        this.expandedItems.splice(index, 1)
+      } else {
+        this.expandedItems.push(recordId)
+      }
+    },
+    
+    async copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text)
+        this.$toast.success('Copied to clipboard!')
+      } catch (err) {
+        this.$toast.error('Failed to copy')
+      }
+    },
+    
+    async copyAnswer() {
+      if (this.aiAnswer && this.aiAnswer.answer) {
+        await this.copyText(this.aiAnswer.answer)
+      }
+    },
+    
+    exportAnswer() {
+      this.$toast.info('Export functionality coming soon')
+    },
+    
+    // eslint-disable-next-line no-unused-vars
+    exportResult(_result) {
+      this.$toast.info('Export functionality coming soon')
+    },
+    
+    searchSimilar(result) {
+      this.searchQuery = result.requirement.substring(0, 100)
+      this.performSearch()
+    },
+    
+    truncateText(text, length) {
+      if (!text) return ''
+      if (text.length <= length) return text
+      return text.substring(0, length) + '...'
+    },
+    
+    formatDate(dateString) {
+      if (!dateString) return 'N/A'
+      try {
+        return format(new Date(dateString), 'MMM d, yyyy')
+      } catch {
+        return dateString
+      }
+    },
+    
+    getScoreColor(score) {
+      if (score >= 0.8) return 'success'
+      if (score >= 0.6) return 'info'
+      if (score >= 0.4) return 'warning'
+      return 'error'
+    },
+    
+    getConfidenceColor(confidence) {
+      if (confidence >= 0.8) return 'success'
+      if (confidence >= 0.6) return 'warning'
+      return 'error'
+    },
+    
+    getResponseColor(category) {
+      const colors = {
+        'Readily Available': 'success',
+        'Configuration': 'info',
+        'Customization': 'warning',
+        'Not Available': 'error',
+        'Pending Review': 'grey'
+      }
+      return colors[category] || 'grey'
+    }
+  }
+}
+</script>
+
+<style scoped>
+.search-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.page-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 16px;
+  padding: 48px 32px;
+  margin-bottom: 32px;
+  color: white;
+  box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+}
+
+.header-content {
+  text-align: center;
+}
+
+.header-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.header-subtitle {
+  font-size: 1.1rem;
+  opacity: 0.95;
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.mode-selector {
+  border-radius: 12px !important;
+}
+
+.search-card {
+  border-radius: 16px !important;
+  transition: all 0.3s ease;
+}
+
+.search-card:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+}
+
+.search-input-wrapper {
+  position: relative;
+}
+
+.enhanced-search-input >>> .v-field {
+  border-radius: 12px;
+  font-size: 1.1rem;
+}
+
+.ai-answer-card {
+  border-radius: 16px !important;
+  border-left: 4px solid #667eea;
+}
+
+.answer-header {
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  padding: 20px 24px;
+  border-radius: 16px 16px 0 0;
+}
+
+.answer-content {
+  background: white;
+}
+
+.answer-text {
+  font-size: 1.05rem;
+  line-height: 1.8;
+  color: #2d3748;
+}
+
+.answer-text >>> h3 {
+  margin-top: 20px;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.answer-text >>> p {
+  margin-bottom: 12px;
+}
+
+.answer-text >>> ul, .answer-text >>> ol {
+  margin-left: 24px;
+  margin-bottom: 12px;
+}
+
+.answer-text >>> li {
+  margin-bottom: 8px;
+}
+
+.answer-text >>> strong {
+  color: #667eea;
+  font-weight: 600;
+}
+
+.sources-header {
+  padding: 16px 0;
+}
+
+.sources-card {
+  border-radius: 12px !important;
+}
+
+.source-item {
+  transition: background-color 0.2s ease;
+}
+
+.source-item:hover {
+  background-color: #f8f9fa;
+}
+
+.relevance-indicator {
+  text-align: center;
+}
+
+.score-circle {
+  position: relative;
+}
+
+.score-text {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.meta-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.requirement-preview {
+  padding: 12px 0;
+}
+
+.highlight-box {
+  background: #fff3cd;
+  border-left: 3px solid #ffc107;
+}
+
+.highlight-box >>> strong {
+  background: #ffeb3b;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.document-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.expanded-content {
+  background: #f8f9fa;
+  border: 1px solid #e0e0e0;
+}
+
+.requirement-text {
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.welcome-card {
+  border-radius: 16px !important;
+  margin-top: 40px;
+}
+
+.example-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.example-chip {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.example-chip:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.empty-state {
+  border-radius: 12px !important;
+}
+
+.gap-2 {
+  gap: 8px;
+}
+
+.border-t {
+  border-top: 1px solid #e0e0e0;
+}
+</style>

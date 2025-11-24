@@ -1,0 +1,235 @@
+{
+  "upload_document": {
+    "request": {
+      "endpoint": "POST /api/documents/upload",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "Content-Type": "multipart/form-data"
+      },
+      "body": {
+        "file": "binary_data",
+        "document_type": "RFP",
+        "metadata": {
+          "rfp_name": "ABC Bank Digital Transformation RFP 2025",
+          "bank_name": "ABC Bank",
+          "product": "MLC"
+        }
+      }
+    },
+    "response": {
+      "document_id": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "processing",
+      "message": "Document uploaded successfully and queued for processing"
+    }
+  },
+  
+  "column_mapping": {
+    "request": {
+      "endpoint": "POST /api/documents/550e8400-e29b-41d4-a716-446655440000/mapping",
+      "body": {
+        "mappings": {
+          "product": "Product Name",
+          "requirement": "Requirement Description",
+          "requirement_category": "Priority",
+          "response_category": "Our Response",
+          "effort_required": "Effort Level",
+          "comments": "Additional Notes"
+        },
+        "save_template": true,
+        "template_name": "ABC Bank Standard Mapping"
+      }
+    },
+    "response": {
+      "status": "processing",
+      "message": "Column mapping applied. Processing 1,245 records..."
+    }
+  },
+  
+  "query_rag": {
+    "request": {
+      "endpoint": "POST /api/query",
+      "body": {
+        "query": "What are the multi-factor authentication requirements for mobile banking?",
+        "top_n": 5,
+        "filters": {
+          "products": ["MLC", "Mobile Banking"],
+          "response_categories": ["Readily Available", "Configuration"],
+          "date_from": "2024-01-01"
+        }
+      }
+    },
+    "response": {
+      "query": "What are the multi-factor authentication requirements for mobile banking?",
+      "total_results": 23,
+      "returned_results": 5,
+      "results": [
+        {
+          "record_id": "7f3b9c45-2341-4d89-b678-123456789abc",
+          "product": "MLC",
+          "requirement": "Mobile banking must support multi-factor authentication with biometric options including fingerprint and facial recognition, along with OTP via SMS/Email",
+          "requirement_category": "Must Have",
+          "response_category": "Readily Available",
+          "effort_required": "Low",
+          "comments": "Available in MLC v3.2 and above. Biometric authentication supported on iOS 12+ and Android 9+. Configuration required for SMS gateway integration.",
+          "rfp_name": "XYZ Bank Mobile Banking RFP 2025",
+          "bank_name": "XYZ Bank",
+          "date": "2025-05-15",
+          "relevance_score": 0.94,
+          "highlight": "...must support **multi-factor authentication** with **biometric** options including fingerprint and facial recognition..."
+        },
+        {
+          "record_id": "8a4c0d56-3452-5e90-c789-234567890bcd",
+          "product": "Mobile Banking",
+          "requirement": "Support for hardware token-based 2FA in addition to software-based authentication methods",
+          "requirement_category": "Good to Have",
+          "response_category": "Configuration",
+          "effort_required": "Medium",
+          "comments": "Hardware token integration available through third-party providers. Requires 2-3 weeks implementation.",
+          "rfp_name": "National Bank Security Enhancement RFP",
+          "bank_name": "National Bank",
+          "date": "2025-06-20",
+          "relevance_score": 0.87,
+          "highlight": "Support for hardware token-based **2FA** in addition to software-based **authentication** methods"
+        }
+      ]
+    }
+  },
+  
+  "get_document_status": {
+    "request": {
+      "endpoint": "GET /api/documents/550e8400-e29b-41d4-a716-446655440000/status"
+    },
+    "response": {
+      "document_id": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "completed",
+      "records_processed": 1245,
+      "total_records": 1250,
+      "errors": [
+        {
+          "row": 456,
+          "error": "Missing required field: product"
+        },
+        {
+          "row": 789,
+          "error": "Invalid response category: 'Maybe Available'"
+        },
+        {
+          "row": 1023,
+          "error": "Date format invalid: '32/13/2025'"
+        },
+        {
+          "row": 1156,
+          "error": "Duplicate requirement detected"
+        },
+        {
+          "row": 1234,
+          "error": "Requirement text exceeds maximum length"
+        }
+      ],
+      "completed_at": "2025-07-11T10:45:23Z"
+    }
+  },
+  
+  "upload_documentation": {
+    "request": {
+      "endpoint": "POST /api/documents/upload",
+      "body": {
+        "file": "binary_data",
+        "document_type": "Documentation",
+        "metadata": {
+          "document_name": "MLC Security Best Practices Guide v3.2",
+          "related_product": "MLC",
+          "submodule": "Security",
+          "document_category": "White Paper",
+          "tags": ["security", "authentication", "mfa", "biometric", "best-practices"]
+        }
+      }
+    },
+    "response": {
+      "document_id": "9b5e7300-f38c-52d5-b827-556677889900",
+      "status": "processing",
+      "message": "Documentation uploaded successfully and queued for text extraction"
+    }
+  },
+  
+  "get_templates": {
+    "request": {
+      "endpoint": "GET /api/templates"
+    },
+    "response": [
+      {
+        "template_id": "abc123-template-id",
+        "template_name": "ABC Bank Standard Mapping",
+        "created_at": "2025-06-01T08:30:00Z",
+        "mappings": {
+          "product": "Product Name",
+          "requirement": "Requirement Description",
+          "requirement_category": "Priority",
+          "response_category": "Our Response",
+          "effort_required": "Effort Level",
+          "comments": "Additional Notes"
+        }
+      },
+      {
+        "template_id": "xyz789-template-id",
+        "template_name": "Generic Bank RFP Format",
+        "created_at": "2025-05-15T14:20:00Z",
+        "mappings": {
+          "product": "Module",
+          "requirement": "Feature Requirement",
+          "requirement_category": "Criticality",
+          "response_category": "Availability",
+          "effort_required": "Implementation Effort",
+          "comments": "Remarks"
+        }
+      }
+    ]
+  },
+  
+  "health_check": {
+    "request": {
+      "endpoint": "GET /api/health"
+    },
+    "response": {
+      "status": "healthy",
+      "timestamp": "2025-07-11T11:30:45Z",
+      "version": "1.0.0",
+      "services": {
+        "database": "healthy",
+        "vector_db": "healthy",
+        "storage": "healthy",
+        "queue": "healthy"
+      }
+    }
+  },
+  
+  "error_responses": {
+    "400_bad_request": {
+      "error": "ValidationError",
+      "message": "Invalid request parameters",
+      "details": {
+        "field": "document_type",
+        "issue": "Must be either 'RFP' or 'Documentation'"
+      }
+    },
+    "401_unauthorized": {
+      "error": "AuthenticationError",
+      "message": "Invalid or expired token",
+      "details": {
+        "token_expired_at": "2025-07-11T10:00:00Z"
+      }
+    },
+    "404_not_found": {
+      "error": "NotFoundError",
+      "message": "Document not found",
+      "details": {
+        "document_id": "550e8400-e29b-41d4-a716-446655440000"
+      }
+    },
+    "413_payload_too_large": {
+      "error": "PayloadTooLarge",
+      "message": "File size exceeds maximum allowed size",
+      "max_size_mb": 50
+    }
+  }
+}

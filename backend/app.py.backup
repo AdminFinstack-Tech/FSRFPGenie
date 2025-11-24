@@ -1,0 +1,407 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from flask_pymongo import PyMongo
+from werkzeug.utils import secure_filename
+import os
+from datetime import datetime
+from bson import ObjectId
+from bs@app.route('/api/search/query', methods=['POST'])
+def query_rag():
+    """Query the RAG system (vector search only)"""
+    data = request.get_json()
+    query = data.get('query')
+    top_n = data.get('top_n', 10)
+    filters = data.get('filters', {})
+    
+    if not query or len(query) < 3:
+        return jsonify({'error': 'Query must be at least 3 characters'}), 400
+    
+    # Perform vector search
+    results = vector_service.search(query, top_n, filters)
+    
+    return jsonify({
+        'query': query,
+        'total_results': len(results),
+        'returned_results': len(results[:top_n]),
+        'results': results[:top_n]
+    })
+
+@app.route('/api/search/ask', methods=['POST'])
+def ask_question():
+    """Intelligent Q&A using GPT-4o + Vector Search (RAG)"""
+    try:
+        data = request.get_json()
+        question = data.get('question')
+        filters = data.get('filters', {})
+        top_n = data.get('top_n', 5)
+        temperature = data.get('temperature', 0.3)
+        max_tokens = data.get('max_tokens', 1000)
+        
+        if not question or len(question) < 3:
+            return jsonify({'error': 'Question must be at least 3 characters'}), 400
+        
+        # Get intelligent answer
+        result = qa_service.ask_question(
+            question=question,
+            filters=filters,
+            top_n=top_n,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in intelligent Q&A: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/search/follow-up', methods=['POST'])
+def ask_follow_up():
+    """Handle follow-up questions with conversation context"""
+    try:
+        data = request.get_json()
+        question = data.get('question')
+        conversation_history = data.get('conversation_history', [])
+        filters = data.get('filters', {})
+        
+        if not question:
+            return jsonify({'error': 'Question is required'}), 400
+        
+        result = qa_service.ask_follow_up(
+            question=question,
+            conversation_history=conversation_history,
+            filters=filters
+        )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/search/suggestions', methods=['GET'])
+def get_question_suggestions():
+    """Get suggested questions based on RFP content"""
+    try:
+        rfp_id = request.args.get('rfp_id')
+        suggestions = qa_service.suggest_questions(rfp_id)
+        
+        return jsonify({
+            'suggestions': suggestions,
+            'count': len(suggestions)
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+import json
+from config import Config
+
+app = Flask(__name__)
+app.config.from_object(Config)
+CORS(app, origins=app.config['CORS_ORIGINS'])
+
+# Initialize MongoDB
+mongo = PyMongo(app)
+db = mongo.db
+
+# Import services after app initialization
+from services import DocumentService, VectorSearchService, FileProcessingService
+from intelligent_qa import IntelligentQAService
+import time
+
+# Allow time for dependent services to start
+if os.environ.get('FLASK_ENV') != 'development':
+    time.sleep(5)
+
+# Initialize services
+doc_service = DocumentService(db)
+vector_service = VectorSearchService()
+file_service = FileProcessingService(db)
+qa_service = IntelligentQAService()
+
+# Helper function to serialize MongoDB documents
+def serialize_doc(doc):
+    """Convert MongoDB document to JSON-serializable format"""
+    if doc:
+        doc['_id'] = str(doc['_id'])
+        if 'document_id' in doc:
+            doc['document_id'] = str(doc['document_id'])
+        if 'created_at' in doc and isinstance(doc['created_at'], datetime):
+            doc['created_at'] = doc['created_at'].isoformat()
+        if 'completed_at' in doc and isinstance(doc['completed_at'], datetime):
+            doc['completed_at'] = doc['completed_at'].isoformat()
+        if 'last_modified' in doc and isinstance(doc['last_modified'], datetime):
+            doc['last_modified'] = doc['last_modified'].isoformat()
+        if 'date' in doc and hasattr(doc['date'], 'isoformat'):
+            doc['date'] = doc['date'].isoformat()
+    return doc
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat(),
+        'version': '1.0.0',
+        'database': 'mongodb'
+    })
+
+@app.route('/api/documents/upload', methods=['POST'])
+def upload_document():
+    """Upload RFP or documentation file"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        document_type = request.form.get('document_type')
+        if document_type not in ['RFP', 'Documentation']:
+            return jsonify({'error': 'Invalid document type'}), 400
+        
+        # Save file
+        filename = secure_filename(file.filename)
+        file_id = ObjectId()
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{str(file_id)}_{filename}")
+        
+        # Ensure upload folder exists
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        file.save(file_path)
+        
+        # Create document record
+        metadata = json.loads(request.form.get('metadata', '{}'))
+        processing_mode = request.form.get('processing_mode', 'professional')  # Get processing mode
+        
+        document = {
+            '_id': file_id,
+            'document_type': document_type,
+            'file_name': filename,
+            'file_path': file_path,
+            'file_size': os.path.getsize(file_path),
+            'metadata': metadata,
+            'processing_mode': processing_mode,  # Store processing mode
+            'status': 'processing',
+            'created_at': datetime.utcnow(),
+            'uploaded_by': request.form.get('uploaded_by', 'anonymous')
+        }
+        
+        db.documents.insert_one(document)
+        
+        # Process file asynchronously
+        file_service.process_document.delay(str(file_id))
+        
+        return jsonify({
+            'document_id': str(file_id),
+            'status': 'processing',
+            'processing_mode': processing_mode,
+            'message': f'Document uploaded successfully ({processing_mode} mode)'
+        }), 202
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/documents/<document_id>/status', methods=['GET'])
+def get_document_status(document_id):
+    """Get document processing status"""
+    try:
+        document = db.documents.find_one({'_id': ObjectId(document_id)})
+        if not document:
+            return jsonify({'error': 'Document not found'}), 404
+        
+        return jsonify({
+            'document_id': str(document['_id']),
+            'status': document.get('status', 'unknown'),
+            'records_processed': document.get('records_processed', 0),
+            'total_records': document.get('total_records', 0),
+            'errors': document.get('error_details', []),
+            'completed_at': document.get('completed_at').isoformat() if document.get('completed_at') else None
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/documents/<document_id>/analyze', methods=['GET'])
+def analyze_document(document_id):
+    """Analyze Excel document and return column information"""
+    try:
+        import pandas as pd
+        
+        document = db.documents.find_one({'_id': ObjectId(document_id)})
+        if not document:
+            return jsonify({'error': 'Document not found'}), 404
+        
+        if document.get('document_type') != 'RFP':
+            return jsonify({'error': 'Only RFP documents can be analyzed'}), 400
+        
+        # Read Excel file
+        file_path = document['file_path']
+        df = pd.read_excel(file_path)
+        
+        # Get column names
+        columns = [str(col) for col in df.columns]
+        
+        # Get preview data (first 5 rows)
+        preview_data = []
+        for idx, row in df.head(5).iterrows():
+            row_data = {}
+            for col in df.columns:
+                val = row[col]
+                # Handle NaN and None values
+                if pd.isna(val) or val is None:
+                    row_data[str(col)] = ''
+                else:
+                    row_data[str(col)] = str(val)[:200]  # Truncate long values
+            preview_data.append(row_data)
+        
+        return jsonify({
+            'document_id': str(document['_id']),
+            'file_name': document['file_name'],
+            'total_rows': len(df),
+            'total_columns': len(columns),
+            'columns': columns,
+            'preview_data': preview_data
+        })
+    except Exception as e:
+        import traceback
+        print(f"Error analyzing document: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Failed to analyze document: {str(e)}'}), 500
+
+@app.route('/api/documents/<document_id>/mapping', methods=['POST'])
+def submit_column_mapping(document_id):
+    """Submit column mapping for RFP document"""
+    try:
+        document = db.documents.find_one({'_id': ObjectId(document_id)})
+        if not document:
+            return jsonify({'error': 'Document not found'}), 404
+        
+        if document.get('document_type') != 'RFP':
+            return jsonify({'error': 'Column mapping only applicable for RFP documents'}), 400
+        
+        data = request.get_json()
+        mappings = data.get('mappings')
+        save_template = data.get('save_template', False)
+        template_name = data.get('template_name')
+        
+        # Save template if requested
+        if save_template and template_name:
+            template = {
+                '_id': ObjectId(),
+                'name': template_name,
+                'mappings': mappings,
+                'created_at': datetime.utcnow(),
+                'created_by': data.get('created_by', 'anonymous')
+            }
+            db.templates.insert_one(template)
+        
+        # Apply mapping and process
+        file_service.apply_mapping_and_process.delay(str(document_id), mappings)
+        
+        return jsonify({
+            'status': 'processing',
+            'message': 'Column mapping applied. Processing records...'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/query', methods=['POST'])
+def query_rag():
+    """Query the RAG system"""
+    data = request.get_json()
+    query = data.get('query')
+    top_n = data.get('top_n', 10)
+    filters = data.get('filters', {})
+    
+    if not query or len(query) < 3:
+        return jsonify({'error': 'Query must be at least 3 characters'}), 400
+    
+    # Perform vector search
+    results = vector_service.search(query, top_n, filters)
+    
+    return jsonify({
+        'query': query,
+        'total_results': len(results),
+        'returned_results': len(results[:top_n]),
+        'results': results[:top_n]
+    })
+
+@app.route('/api/templates', methods=['GET'])
+def get_templates():
+    """Get all column mapping templates"""
+    templates = list(db.templates.find())
+    
+    return jsonify([{
+        'template_id': str(t['_id']),
+        'template_name': t['name'],
+        'created_at': t['created_at'].isoformat(),
+        'mappings': t['mappings']
+    } for t in templates])
+
+@app.route('/api/documents/<document_id>/records', methods=['GET'])
+def get_document_records(document_id):
+    """Get processed records from a document"""
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 50, type=int)
+    skip = (page - 1) * limit
+    
+    if document_id == 'recent':
+        # Get recent records across all documents
+        total = db.rfp_entries.count_documents({})
+        records = list(db.rfp_entries.find().sort('created_at', -1).skip(skip).limit(limit))
+    else:
+        # Get records for specific document
+        query = {'document_id': ObjectId(document_id)}
+        total = db.rfp_entries.count_documents(query)
+        records = list(db.rfp_entries.find(query).skip(skip).limit(limit))
+    
+    return jsonify({
+        'total': total,
+        'page': page,
+        'limit': limit,
+        'records': [{
+            'record_id': str(r['_id']),
+            'product': r.get('product', 'General'),
+            'requirement': r.get('requirement', ''),
+            'requirement_category': r.get('requirement_category', ''),
+            'response_category': r.get('response_category', ''),
+            'effort_required': r.get('effort_required'),
+            'comments': r.get('comments'),
+            'rfp_name': r.get('rfp_name', ''),
+            'bank_name': r.get('bank_name', ''),
+            'date': r.get('date').isoformat() if r.get('date') else None
+        } for r in records]
+    })
+
+@app.route('/api/stats', methods=['GET'])
+def get_stats():
+    """Get system statistics"""
+    # Get counts
+    total_documents = db.documents.count_documents({})
+    total_records = db.rfp_entries.count_documents({})
+    
+    # Get product distribution using aggregation
+    pipeline = [
+        {'$group': {
+            '_id': '$product',
+            'count': {'$sum': 1}
+        }},
+        {'$sort': {'count': -1}}
+    ]
+    
+    product_stats = list(db.rfp_entries.aggregate(pipeline))
+    product_distribution = {stat['_id']: stat['count'] for stat in product_stats}
+    
+    # Get last upload
+    last_doc = db.documents.find_one(sort=[('created_at', -1)])
+    
+    return jsonify({
+        'total_documents': total_documents,
+        'total_records': total_records,
+        'product_distribution': product_distribution,
+        'last_upload': last_doc['created_at'].isoformat() if last_doc else None
+    })
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)

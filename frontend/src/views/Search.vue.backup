@@ -1,0 +1,476 @@
+<template>
+  <div>
+    <!-- Page Header -->
+    <div class="mb-8">
+      <h1 class="text-3xl font-bold text-gray-900 mb-2">Search Knowledge Base</h1>
+      <p class="text-gray-600">Find requirements and documentation using natural language queries</p>
+    </div>
+
+    <!-- Search Bar -->
+    <v-card class="mb-6 pa-6">
+      <v-text-field
+        v-model="searchQuery"
+        placeholder="What are the SLA requirements for MLC support?"
+        prepend-inner-icon="mdi-magnify"
+        variant="solo"
+        density="comfortable"
+        clearable
+        @keyup.enter="performSearch"
+        @click:clear="clearSearch"
+        class="search-input"
+        hide-details
+      >
+        <template v-slot:append>
+          <v-btn
+            color="primary"
+            @click="performSearch"
+            :loading="loading"
+            :disabled="!searchQuery"
+          >
+            Search
+          </v-btn>
+        </template>
+      </v-text-field>
+
+      <!-- Filters -->
+      <v-expand-transition>
+        <div v-if="showFilters" class="mt-4">
+          <v-divider class="mb-4"></v-divider>
+          <v-row>
+            <v-col cols="12" md="3">
+              <v-select
+                v-model="filters.products"
+                label="Products"
+                :items="availableProducts"
+                multiple
+                chips
+                closable-chips
+                clearable
+                density="compact"
+              ></v-select>
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-select
+                v-model="filters.response_categories"
+                label="Response Category"
+                :items="responseCategories"
+                multiple
+                chips
+                closable-chips
+                clearable
+                density="compact"
+              ></v-select>
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-menu
+                v-model="dateMenu"
+                :close-on-content-click="false"
+                transition="scale-transition"
+                min-width="290px"
+              >
+                <template v-slot:activator="{ on, attrs }">
+                  <v-text-field
+                    :value="dateRangeText"
+                    label="Date Range"
+                    prepend-inner-icon="mdi-calendar"
+                    readonly
+                    v-bind="attrs"
+                    v-on="on"
+                    clearable
+                    density="compact"
+                    @click:clear="clearDateRange"
+                  ></v-text-field>
+                </template>
+                <v-date-picker
+                  v-model="dateRange"
+                  range
+                  @change="dateMenu = false"
+                ></v-date-picker>
+              </v-menu>
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-select
+                v-model="resultLimit"
+                label="Results per page"
+                :items="[10, 20, 50, 100]"
+                density="compact"
+              ></v-select>
+            </v-col>
+          </v-row>
+        </div>
+      </v-expand-transition>
+
+      <div class="mt-3 text-center">
+        <v-btn
+          text
+          small
+          @click="showFilters = !showFilters"
+        >
+          <v-icon left small>{{ showFilters ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+          {{ showFilters ? 'Hide' : 'Show' }} Filters
+        </v-btn>
+      </div>
+    </v-card>
+
+    <!-- Search Results -->
+    <div v-if="hasSearched">
+      <!-- Results Summary -->
+      <div class="mb-4 d-flex justify-space-between align-center">
+        <p class="text-body-1">
+          Found <strong>{{ totalResults }}</strong> results for 
+          "<strong>{{ lastSearchQuery }}</strong>"
+        </p>
+        <v-btn
+          v-if="searchResults.length > 0"
+          text
+          small
+          color="primary"
+          @click="exportResults"
+        >
+          <v-icon left small>mdi-download</v-icon>
+          Export Results
+        </v-btn>
+      </div>
+
+      <!-- Results List -->
+      <v-card v-if="searchResults.length > 0" class="mb-6">
+        <v-list class="py-0">
+          <template v-for="(result, index) in searchResults" :key="result.record_id">
+            <v-hover
+              v-slot="{ isHovering, props }"
+            >
+              <v-list-item
+                v-bind="props"
+                class="py-4"
+                :class="{ 'bg-gray-50': isHovering }"
+              >
+                <v-list-item-content>
+                  <div class="d-flex align-start">
+                    <!-- Relevance Score -->
+                    <div class="mr-4 text-center">
+                      <v-progress-circular
+                        :value="result.relevance_score * 100"
+                        :size="50"
+                        :width="5"
+                        :color="getScoreColor(result.relevance_score)"
+                      >
+                        <span class="text-caption font-weight-bold">
+                          {{ Math.round(result.relevance_score * 100) }}%
+                        </span>
+                      </v-progress-circular>
+                    </div>
+
+                    <!-- Result Content -->
+                    <div class="flex-grow-1">
+                      <div class="d-flex align-center mb-2">
+                        <v-chip small label class="mr-2">{{ result.product }}</v-chip>
+                        <v-chip
+                          small
+                          label
+                          :color="getResponseColor(result.response_category)"
+                          dark
+                        >
+                          {{ result.response_category }}
+                        </v-chip>
+                        <v-chip
+                          v-if="result.effort_required"
+                          small
+                          label
+                          outlined
+                          class="ml-2"
+                        >
+                          Effort: {{ result.effort_required }}
+                        </v-chip>
+                      </div>
+
+                      <h3 class="text-subtitle-1 font-weight-medium mb-2">
+                        {{ truncateText(result.requirement, 200) }}
+                      </h3>
+
+                      <div class="text-body-2 text-gray-600 mb-2">
+                        <span class="mr-4">
+                          <v-icon x-small class="mr-1">mdi-file-document</v-icon>
+                          {{ result.rfp_name }}
+                        </span>
+                        <span class="mr-4">
+                          <v-icon x-small class="mr-1">mdi-bank</v-icon>
+                          {{ result.bank_name }}
+                        </span>
+                        <span>
+                          <v-icon x-small class="mr-1">mdi-calendar</v-icon>
+                          {{ formatDate(result.date) }}
+                        </span>
+                      </div>
+
+                      <!-- Expandable Details -->
+                      <v-expand-transition>
+                        <div v-if="expandedItems.includes(result.record_id)">
+                          <v-divider class="my-3"></v-divider>
+                          
+                          <div class="pa-3 bg-gray-50 rounded">
+                            <h4 class="text-subtitle-2 font-weight-bold mb-2">Full Requirement</h4>
+                            <p class="text-body-2 mb-3">{{ result.requirement }}</p>
+                            
+                            <div v-if="result.comments" class="mb-3">
+                              <h4 class="text-subtitle-2 font-weight-bold mb-1">Comments</h4>
+                              <p class="text-body-2">{{ result.comments }}</p>
+                            </div>
+
+                            <div v-if="result.highlight" class="mb-3">
+                              <h4 class="text-subtitle-2 font-weight-bold mb-1">Matching Text</h4>
+                              <p class="text-body-2" v-html="result.highlight"></p>
+                            </div>
+
+                            <div class="d-flex gap-2 mt-3">
+                              <v-btn small outlined color="primary">
+                                <v-icon left small>mdi-content-copy</v-icon>
+                                Copy
+                              </v-btn>
+                              <v-btn small outlined color="primary">
+                                <v-icon left small>mdi-pencil</v-icon>
+                                Edit
+                              </v-btn>
+                              <v-btn small outlined color="primary">
+                                <v-icon left small>mdi-export</v-icon>
+                                Export
+                              </v-btn>
+                            </div>
+                          </div>
+                        </div>
+                      </v-expand-transition>
+
+                      <!-- Expand/Collapse Button -->
+                      <v-btn
+                        text
+                        small
+                        color="primary"
+                        @click="toggleExpand(result.record_id)"
+                        class="mt-2"
+                      >
+                        <v-icon left small>
+                          {{ expandedItems.includes(result.record_id) ? 'mdi-chevron-up' : 'mdi-chevron-down' }}
+                        </v-icon>
+                        {{ expandedItems.includes(result.record_id) ? 'Show Less' : 'Show More' }}
+                      </v-btn>
+                    </div>
+                  </div>
+                </v-list-item-content>
+              </v-list-item>
+            </v-hover>
+            
+            <v-divider
+              v-if="index < searchResults.length - 1"
+              :key="`divider-${index}`"
+            ></v-divider>
+          </template>
+        </v-list>
+
+        <!-- Load More -->
+        <div v-if="searchResults.length < totalResults" class="pa-4 text-center">
+          <v-btn
+            color="primary"
+            outlined
+            @click="loadMore"
+            :loading="loadingMore"
+          >
+            Load More Results
+          </v-btn>
+        </div>
+      </v-card>
+
+      <!-- No Results -->
+      <v-card v-else class="pa-12 text-center">
+        <v-icon size="64" color="gray">mdi-magnify-close</v-icon>
+        <h3 class="text-h6 mt-4 mb-2">No results found</h3>
+        <p class="text-body-2 text-gray-600">
+          Try adjusting your search query or filters
+        </p>
+      </v-card>
+    </div>
+
+    <!-- Initial State -->
+    <v-card v-else class="pa-12 text-center">
+      <v-icon size="64" color="primary">mdi-magnify</v-icon>
+      <h3 class="text-h6 mt-4 mb-2">Start Searching</h3>
+      <p class="text-body-2 text-gray-600 mb-6">
+        Enter a natural language query to search through RFP requirements and documentation
+      </p>
+      
+      <!-- Example Queries -->
+      <div class="mx-auto" style="max-width: 600px;">
+        <p class="text-caption text-gray-500 mb-2">Try these example queries:</p>
+        <v-chip-group column>
+          <v-chip
+            v-for="example in exampleQueries"
+            :key="example"
+            @click="searchQuery = example; performSearch()"
+            outlined
+            class="ma-1"
+          >
+            {{ example }}
+          </v-chip>
+        </v-chip-group>
+      </div>
+    </v-card>
+  </div>
+</template>
+
+<script>
+import { format } from 'date-fns'
+
+export default {
+  name: 'SearchView',
+  data() {
+    return {
+      searchQuery: '',
+      lastSearchQuery: '',
+      showFilters: false,
+      loading: false,
+      loadingMore: false,
+      hasSearched: false,
+      expandedItems: [],
+      filters: {
+        products: [],
+        response_categories: [],
+        date_from: null,
+        date_to: null
+      },
+      dateRange: [],
+      dateMenu: false,
+      resultLimit: 10,
+      totalResults: 0,
+      availableProducts: ['MLC', 'EPLC', 'Integration', 'Mobile Banking', 'Internet Banking'],
+      responseCategories: ['Readily Available', 'Configuration', 'Customization', 'Not Available'],
+      exampleQueries: [
+        'What are the SLA requirements for support?',
+        'Multi-factor authentication for mobile banking',
+        'Integration with third-party systems',
+        'Reporting and analytics capabilities',
+        'Security compliance requirements'
+      ]
+    }
+  },
+  computed: {
+    searchResults() {
+      return this.$store.state.searchResults
+    },
+    dateRangeText() {
+      if (this.dateRange.length === 2) {
+        return `${this.formatDate(this.dateRange[0])} - ${this.formatDate(this.dateRange[1])}`
+      }
+      return ''
+    }
+  },
+  methods: {
+    async performSearch() {
+      if (!this.searchQuery) return
+      
+      this.loading = true
+      this.hasSearched = true
+      this.lastSearchQuery = this.searchQuery
+      this.expandedItems = []
+      
+      try {
+        const filters = {
+          products: this.filters.products,
+          response_categories: this.filters.response_categories
+        }
+        
+        if (this.dateRange.length === 2) {
+          filters.date_from = this.dateRange[0]
+          filters.date_to = this.dateRange[1]
+        }
+        
+        const response = await this.$store.dispatch('searchRAG', {
+          query: this.searchQuery,
+          topN: this.resultLimit,
+          filters
+        })
+        
+        this.totalResults = response.total_results
+        
+      } catch (error) {
+        this.$toast.error('Search failed. Please try again.')
+        console.error(error)
+      } finally {
+        this.loading = false
+      }
+    },
+    async loadMore() {
+      this.loadingMore = true
+      try {
+        // In a real implementation, you would load the next page
+        // For now, we'll just show a loading state
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        this.$toast.info('Load more functionality coming soon')
+      } finally {
+        this.loadingMore = false
+      }
+    },
+    clearSearch() {
+      this.searchQuery = ''
+      this.hasSearched = false
+      this.lastSearchQuery = ''
+      this.$store.commit('SET_SEARCH_RESULTS', [])
+    },
+    clearDateRange() {
+      this.dateRange = []
+      this.filters.date_from = null
+      this.filters.date_to = null
+    },
+    toggleExpand(recordId) {
+      const index = this.expandedItems.indexOf(recordId)
+      if (index > -1) {
+        this.expandedItems.splice(index, 1)
+      } else {
+        this.expandedItems.push(recordId)
+      }
+    },
+    exportResults() {
+      // In a real implementation, this would export to Excel/CSV
+      this.$toast.info('Export functionality coming soon')
+    },
+    truncateText(text, length) {
+      if (text.length <= length) return text
+      return text.substring(0, length) + '...'
+    },
+    formatDate(dateString) {
+      if (!dateString) return 'N/A'
+      try {
+        return format(new Date(dateString), 'MMM d, yyyy')
+      } catch {
+        return dateString
+      }
+    },
+    getScoreColor(score) {
+      if (score >= 0.8) return 'success'
+      if (score >= 0.6) return 'info'
+      if (score >= 0.4) return 'warning'
+      return 'error'
+    },
+    getResponseColor(category) {
+      const colors = {
+        'Readily Available': 'success',
+        'Configuration': 'info',
+        'Customization': 'warning',
+        'Not Available': 'error'
+      }
+      return colors[category] || 'gray'
+    }
+  }
+}
+</script>
+
+<style scoped>
+.search-input >>> .v-field__input {
+  font-size: 1.1rem;
+}
+
+.gap-2 {
+  gap: 0.5rem;
+}
+
+.bg-gray-50 {
+  background-color: #f9fafb;
+}
+</style>

@@ -1,0 +1,5 @@
+Test RFP Document
+
+Requirement 1: The system shall support user authentication
+Requirement 2: The system shall provide real-time data processing
+Requirement 3: The system shall support multi-currency transactions
